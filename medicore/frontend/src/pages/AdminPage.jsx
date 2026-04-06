@@ -1,35 +1,83 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { useNavigate, Link } from 'react-router-dom'
-import { Plus, Edit2, Trash2, Save, X, Users, Calendar, FlaskConical, TrendingUp, Check } from 'lucide-react'
-import { DOCTORS } from '../utils/data'
+import { Link } from 'react-router-dom'
+import { Plus, Edit2, Trash2, Save, X, Users, Calendar, FlaskConical, TrendingUp, Check, Loader2 } from 'lucide-react'
+import api from '../utils/api'
 import toast from 'react-hot-toast'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const ALL_SLOTS = ['08:00 AM','08:30 AM','09:00 AM','09:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM','12:00 PM','02:00 PM','02:30 PM','03:00 PM','03:30 PM','04:00 PM','04:30 PM','05:00 PM','05:30 PM','06:00 PM']
 
-const STATS = [
-  { label: 'Total Appointments', value: '1,284', change: '+12%', icon: Calendar, color: 'primary' },
-  { label: 'Active Doctors', value: '24', change: '+2', icon: Users, color: 'teal' },
-  { label: 'Tests Booked', value: '3,891', change: '+8%', icon: FlaskConical, color: 'emerald' },
-  { label: 'Revenue (Month)', value: '₹4.2L', change: '+18%', icon: TrendingUp, color: 'primary' },
-]
+const EMPTY_DOC = {
+  name: '', specialization: '', experience: '', qualification: '', fee: '',
+  bio: '', availableDays: [], timeSlots: [], rating: 4.8, reviews: 0,
+  image: 'https://api.dicebear.com/7.x/personas/svg?seed=new'
+}
 
 export default function AdminPage() {
   const { user, isAdmin } = useAuth()
-  const navigate = useNavigate()
 
-  const [doctors, setDoctors] = useState(DOCTORS)
+  const [doctors, setDoctors] = useState([])
+  const [loadingDoctors, setLoadingDoctors] = useState(true)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
-  const [newDoc, setNewDoc] = useState({
-    name: '', specialization: '', experience: '', qualification: '', fee: '',
-    bio: '', availableDays: [], timeSlots: [], rating: 4.8, reviews: 0,
-    image: 'https://api.dicebear.com/7.x/personas/svg?seed=new'
-  })
+  const [newDoc, setNewDoc] = useState(EMPTY_DOC)
+  const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState('doctors')
 
+  // ─── Bookings state ───
+  const [appointments, setAppointments] = useState([])
+  const [testBookings, setTestBookings] = useState([])
+  const [loadingBookings, setLoadingBookings] = useState(false)
+  const [stats, setStats] = useState(null)
+
+  // ─── Fetch doctors ───
+  useEffect(() => {
+    fetchDoctors()
+    fetchStats()
+  }, [])
+
+  useEffect(() => {
+    if (tab === 'bookings') fetchBookings()
+  }, [tab])
+
+  const fetchDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const { data } = await api.get('/doctors')
+      setDoctors(data.doctors)
+    } catch {
+      toast.error('Failed to load doctors')
+    } finally {
+      setLoadingDoctors(false)
+    }
+  }
+
+  const fetchStats = async () => {
+    try {
+      const { data } = await api.get('/bookings/stats')
+      setStats(data.stats)
+    } catch {}
+  }
+
+  const fetchBookings = async () => {
+    try {
+      setLoadingBookings(true)
+      const [apptRes, testRes] = await Promise.all([
+        api.get('/bookings/appointments'),
+        api.get('/bookings/tests'),
+      ])
+      setAppointments(apptRes.data.appointments)
+      setTestBookings(testRes.data.bookings)
+    } catch {
+      toast.error('Failed to load bookings')
+    } finally {
+      setLoadingBookings(false)
+    }
+  }
+
+  // ─── Guard ───
   if (!isAdmin) {
     return (
       <main className="pt-28 pb-16 min-h-screen bg-neutral-50 flex items-center justify-center">
@@ -46,30 +94,72 @@ export default function AdminPage() {
     )
   }
 
+  // ─── Doctor CRUD ───
   const startEdit = (doc) => {
-    setEditingId(doc.id)
+    setEditingId(doc._id)
     setEditForm({ ...doc })
   }
 
-  const saveEdit = () => {
-    setDoctors(prev => prev.map(d => d.id === editingId ? { ...editForm } : d))
-    setEditingId(null)
-    toast.success('Doctor updated successfully!')
+  const saveEdit = async () => {
+    try {
+      setSaving(true)
+      const { data } = await api.patch(`/doctors/${editingId}`, editForm)
+      setDoctors(prev => prev.map(d => d._id === editingId ? data.doctor : d))
+      setEditingId(null)
+      toast.success('Doctor updated successfully!')
+    } catch {
+      toast.error('Failed to update doctor')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const deleteDoctor = (id) => {
-    if (!window.confirm('Delete this doctor?')) return
-    setDoctors(prev => prev.filter(d => d.id !== id))
-    toast.success('Doctor removed')
+  const deleteDoctor = async (id) => {
+    if (!window.confirm('Deactivate this doctor?')) return
+    try {
+      await api.delete(`/doctors/${id}`)
+      setDoctors(prev => prev.filter(d => d._id !== id))
+      toast.success('Doctor deactivated')
+    } catch {
+      toast.error('Failed to deactivate doctor')
+    }
   }
 
-  const addDoctor = () => {
-    if (!newDoc.name || !newDoc.specialization) { toast.error('Name and specialization required'); return }
-    const doc = { ...newDoc, id: Date.now(), experience: Number(newDoc.experience), fee: Number(newDoc.fee) }
-    setDoctors(prev => [...prev, doc])
-    setShowAdd(false)
-    setNewDoc({ name: '', specialization: '', experience: '', qualification: '', fee: '', bio: '', availableDays: [], timeSlots: [], rating: 4.8, reviews: 0, image: 'https://api.dicebear.com/7.x/personas/svg?seed=new' })
-    toast.success('Doctor added successfully!')
+  const addDoctor = async () => {
+    if (!newDoc.name || !newDoc.specialization) {
+      toast.error('Name and specialization required')
+      return
+    }
+    try {
+      setSaving(true)
+      const payload = { ...newDoc, experience: Number(newDoc.experience), fee: Number(newDoc.fee) }
+      const { data } = await api.post('/doctors', payload)
+      setDoctors(prev => [...prev, data.doctor])
+      setShowAdd(false)
+      setNewDoc(EMPTY_DOC)
+      toast.success('Doctor added successfully!')
+    } catch {
+      toast.error('Failed to add doctor')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updateBookingStatus = async (type, id, status) => {
+    try {
+      const endpoint = type === 'appointment'
+        ? `/bookings/appointments/${id}/status`
+        : `/bookings/tests/${id}/status`
+      await api.patch(endpoint, { status })
+      if (type === 'appointment') {
+        setAppointments(prev => prev.map(a => a._id === id ? { ...a, status } : a))
+      } else {
+        setTestBookings(prev => prev.map(b => b._id === id ? { ...b, status } : b))
+      }
+      toast.success('Status updated!')
+    } catch {
+      toast.error('Failed to update status')
+    }
   }
 
   const toggleDay = (form, setForm, day) => {
@@ -86,16 +176,22 @@ export default function AdminPage() {
     setForm({ ...form, timeSlots: slots })
   }
 
-  const MOCK_BOOKINGS = [
-    { id: 'MC240101', patient: 'Meera Krishnaswamy', doctor: 'Dr. Anika Sharma', date: '2025-04-02', time: '10:00 AM', status: 'confirmed', type: 'appointment' },
-    { id: 'DX240201', patient: 'Rohit Agarwal', doctor: '—', date: '2025-04-03', time: '08:00 AM', status: 'upcoming', type: 'test', tests: 'CBC, Thyroid' },
-    { id: 'MC240102', patient: 'Vikram Joshi', doctor: 'Dr. Arjun Patel', date: '2025-04-01', time: '04:30 PM', status: 'completed', type: 'appointment' },
-    { id: 'DX240202', patient: 'Sunita Rao', doctor: '—', date: '2025-03-30', time: '09:00 AM', status: 'report_ready', type: 'test', tests: 'MRI Brain' },
+  const STAT_CARDS = [
+    { label: 'Total Appointments', value: stats?.totalAppointments ?? '—', icon: Calendar, color: 'primary' },
+    { label: 'Active Doctors', value: doctors.length || '—', icon: Users, color: 'teal' },
+    { label: 'Tests Booked', value: stats?.totalTests ?? '—', icon: FlaskConical, color: 'emerald' },
+    { label: 'Confirmed Appts', value: stats?.confirmedAppts ?? '—', icon: TrendingUp, color: 'primary' },
   ]
+
+  const allBookings = [
+    ...appointments.map(a => ({ ...a, bookingType: 'appointment' })),
+    ...testBookings.map(b => ({ ...b, bookingType: 'test' })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date))
 
   return (
     <main className="pt-28 pb-16 min-h-screen bg-neutral-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
           <div>
@@ -110,13 +206,12 @@ export default function AdminPage() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {STATS.map(s => (
+          {STAT_CARDS.map(s => (
             <div key={s.label} className="card p-5">
               <div className="flex items-start justify-between mb-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-${s.color}-50`}>
                   <s.icon size={20} className={`text-${s.color}-600`} />
                 </div>
-                <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">{s.change}</span>
               </div>
               <div className="text-2xl font-bold text-neutral-800">{s.value}</div>
               <div className="text-xs text-neutral-500 mt-0.5">{s.label}</div>
@@ -132,7 +227,7 @@ export default function AdminPage() {
           ].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === t.id ? 'bg-primary-600 text-white' : 'bg-white text-neutral-600 hover:bg-neutral-100 border border-neutral-200'}`}>
-              <t.icon size={15} /> {t.label}
+              <t.icon size={15} />{t.label}
             </button>
           ))}
         </div>
@@ -140,190 +235,245 @@ export default function AdminPage() {
         {/* ─── DOCTORS TAB ─── */}
         {tab === 'doctors' && (
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-neutral-800">Doctors ({doctors.length})</h2>
-              <button onClick={() => setShowAdd(!showAdd)} className="btn-primary flex items-center gap-2 text-sm">
-                <Plus size={16} /> Add Doctor
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-semibold text-neutral-700">Doctors ({doctors.length})</h2>
+              <button onClick={() => setShowAdd(!showAdd)}
+                className="btn-primary flex items-center gap-2 text-sm">
+                <Plus size={15} /> Add Doctor
               </button>
             </div>
 
-            {/* Add Doctor Form */}
+            {/* Add form */}
             {showAdd && (
-              <div className="card p-6 mb-6 border-2 border-primary-100">
-                <h3 className="font-bold text-neutral-800 mb-4 flex items-center gap-2"><Plus size={16} className="text-primary-600" /> New Doctor</h3>
+              <div className="card p-6 mb-4 border-2 border-primary-100">
+                <h3 className="font-semibold text-neutral-800 mb-4">New Doctor</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-                  <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Full Name *</label>
-                    <input className="input-field text-sm" value={newDoc.name} onChange={e => setNewDoc({...newDoc, name: e.target.value})} placeholder="Dr. Full Name" /></div>
-                  <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Specialization *</label>
-                    <input className="input-field text-sm" value={newDoc.specialization} onChange={e => setNewDoc({...newDoc, specialization: e.target.value})} placeholder="Cardiologist" /></div>
-                  <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Qualification</label>
-                    <input className="input-field text-sm" value={newDoc.qualification} onChange={e => setNewDoc({...newDoc, qualification: e.target.value})} placeholder="MBBS, MD..." /></div>
-                  <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Experience (years)</label>
-                    <input className="input-field text-sm" type="number" value={newDoc.experience} onChange={e => setNewDoc({...newDoc, experience: e.target.value})} placeholder="10" /></div>
-                  <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Consultation Fee (₹)</label>
-                    <input className="input-field text-sm" type="number" value={newDoc.fee} onChange={e => setNewDoc({...newDoc, fee: e.target.value})} placeholder="700" /></div>
+                  {[
+                    { label: 'Name', key: 'name' },
+                    { label: 'Specialization', key: 'specialization' },
+                    { label: 'Qualification', key: 'qualification' },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="block text-xs font-semibold text-neutral-600 mb-1">{f.label}</label>
+                      <input className="input-field text-sm" value={newDoc[f.key]}
+                        onChange={e => setNewDoc({ ...newDoc, [f.key]: e.target.value })} />
+                    </div>
+                  ))}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-600 mb-1">Experience (yrs)</label>
+                    <input className="input-field text-sm" type="number" value={newDoc.experience}
+                      onChange={e => setNewDoc({ ...newDoc, experience: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-600 mb-1">Fee (₹)</label>
+                    <input className="input-field text-sm" type="number" value={newDoc.fee}
+                      onChange={e => setNewDoc({ ...newDoc, fee: e.target.value })} />
+                  </div>
                 </div>
-                <div className="mb-4">
+                <div className="mb-3">
+                  <label className="block text-xs font-semibold text-neutral-600 mb-2">Bio</label>
+                  <textarea className="input-field text-sm" rows={2} value={newDoc.bio}
+                    onChange={e => setNewDoc({ ...newDoc, bio: e.target.value })} />
+                </div>
+                <div className="mb-3">
                   <label className="block text-xs font-semibold text-neutral-600 mb-2">Available Days</label>
                   <div className="flex flex-wrap gap-2">
                     {DAYS.map(day => (
                       <button key={day} type="button" onClick={() => toggleDay(newDoc, setNewDoc, day)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${newDoc.availableDays.includes(day) ? 'bg-primary-600 text-white border-primary-600' : 'border-neutral-200 text-neutral-600 hover:border-primary-300'}`}>
-                        {day.slice(0,3)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${newDoc.availableDays.includes(day) ? 'bg-primary-600 text-white border-primary-600' : 'border-neutral-200 text-neutral-600'}`}>
+                        {day.slice(0, 3)}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-semibold text-neutral-600 mb-2">Time Slots</label>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {ALL_SLOTS.map(slot => (
                       <button key={slot} type="button" onClick={() => toggleSlot(newDoc, setNewDoc, slot)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${newDoc.timeSlots.includes(slot) ? 'bg-teal-500 text-white border-teal-500' : 'border-neutral-200 text-neutral-600 hover:border-teal-300'}`}>
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${newDoc.timeSlots.includes(slot) ? 'bg-teal-500 text-white border-teal-500' : 'border-neutral-200 text-neutral-600'}`}>
                         {slot}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="flex gap-3">
-                  <button onClick={addDoctor} className="btn-primary flex items-center gap-2 text-sm"><Save size={14} /> Save Doctor</button>
-                  <button onClick={() => setShowAdd(false)} className="btn-outline flex items-center gap-2 text-sm"><X size={14} /> Cancel</button>
+                  <button onClick={addDoctor} disabled={saving}
+                    className="btn-primary flex items-center gap-2 text-sm">
+                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add Doctor
+                  </button>
+                  <button onClick={() => setShowAdd(false)} className="btn-outline flex items-center gap-2 text-sm">
+                    <X size={14} /> Cancel
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* Doctors list */}
-            <div className="space-y-4">
-              {doctors.map(doc => (
-                <div key={doc.id} className="card p-5">
-                  {editingId === doc.id && editForm ? (
-                    /* Edit mode */
-                    <div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-                        <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Name</label>
-                          <input className="input-field text-sm" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /></div>
-                        <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Specialization</label>
-                          <input className="input-field text-sm" value={editForm.specialization} onChange={e => setEditForm({...editForm, specialization: e.target.value})} /></div>
-                        <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Experience (yrs)</label>
-                          <input className="input-field text-sm" type="number" value={editForm.experience} onChange={e => setEditForm({...editForm, experience: Number(e.target.value)})} /></div>
-                        <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Fee (₹)</label>
-                          <input className="input-field text-sm" type="number" value={editForm.fee} onChange={e => setEditForm({...editForm, fee: Number(e.target.value)})} /></div>
-                        <div><label className="block text-xs font-semibold text-neutral-600 mb-1">Qualification</label>
-                          <input className="input-field text-sm" value={editForm.qualification} onChange={e => setEditForm({...editForm, qualification: e.target.value})} /></div>
-                      </div>
-                      <div className="mb-3">
-                        <label className="block text-xs font-semibold text-neutral-600 mb-2">Available Days</label>
-                        <div className="flex flex-wrap gap-2">
-                          {DAYS.map(day => (
-                            <button key={day} type="button" onClick={() => toggleDay(editForm, setEditForm, day)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${editForm.availableDays.includes(day) ? 'bg-primary-600 text-white border-primary-600' : 'border-neutral-200 text-neutral-600'}`}>
-                              {day.slice(0,3)}
-                            </button>
+            {/* Doctor list */}
+            {loadingDoctors ? (
+              <div className="flex justify-center py-16">
+                <Loader2 size={32} className="animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {doctors.map(doc => (
+                  <div key={doc._id} className="card p-5">
+                    {editingId === doc._id ? (
+                      <div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                          {[
+                            { label: 'Name', key: 'name' },
+                            { label: 'Specialization', key: 'specialization' },
+                            { label: 'Qualification', key: 'qualification' },
+                          ].map(f => (
+                            <div key={f.key}>
+                              <label className="block text-xs font-semibold text-neutral-600 mb-1">{f.label}</label>
+                              <input className="input-field text-sm" value={editForm[f.key]}
+                                onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })} />
+                            </div>
                           ))}
+                          <div>
+                            <label className="block text-xs font-semibold text-neutral-600 mb-1">Experience (yrs)</label>
+                            <input className="input-field text-sm" type="number" value={editForm.experience}
+                              onChange={e => setEditForm({ ...editForm, experience: Number(e.target.value) })} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-neutral-600 mb-1">Fee (₹)</label>
+                            <input className="input-field text-sm" type="number" value={editForm.fee}
+                              onChange={e => setEditForm({ ...editForm, fee: Number(e.target.value) })} />
+                          </div>
+                        </div>
+                        <div className="mb-3">
+                          <label className="block text-xs font-semibold text-neutral-600 mb-2">Available Days</label>
+                          <div className="flex flex-wrap gap-2">
+                            {DAYS.map(day => (
+                              <button key={day} type="button" onClick={() => toggleDay(editForm, setEditForm, day)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${editForm.availableDays.includes(day) ? 'bg-primary-600 text-white border-primary-600' : 'border-neutral-200 text-neutral-600'}`}>
+                                {day.slice(0, 3)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="mb-4">
+                          <label className="block text-xs font-semibold text-neutral-600 mb-2">Time Slots</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {ALL_SLOTS.map(slot => (
+                              <button key={slot} type="button" onClick={() => toggleSlot(editForm, setEditForm, slot)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${editForm.timeSlots.includes(slot) ? 'bg-teal-500 text-white border-teal-500' : 'border-neutral-200 text-neutral-600'}`}>
+                                {slot}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex gap-3">
+                          <button onClick={saveEdit} disabled={saving}
+                            className="btn-primary flex items-center gap-2 text-sm">
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Changes
+                          </button>
+                          <button onClick={() => setEditingId(null)} className="btn-outline flex items-center gap-2 text-sm">
+                            <X size={14} /> Cancel
+                          </button>
                         </div>
                       </div>
-                      <div className="mb-4">
-                        <label className="block text-xs font-semibold text-neutral-600 mb-2">Time Slots</label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ALL_SLOTS.map(slot => (
-                            <button key={slot} type="button" onClick={() => toggleSlot(editForm, setEditForm, slot)}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${editForm.timeSlots.includes(slot) ? 'bg-teal-500 text-white border-teal-500' : 'border-neutral-200 text-neutral-600'}`}>
-                              {slot}
-                            </button>
-                          ))}
+                    ) : (
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <img src={doc.image} alt={doc.name} className="w-14 h-14 rounded-xl bg-primary-50 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-neutral-800">{doc.name}</h3>
+                            <span className="badge bg-primary-50 text-primary-700 text-[10px]">{doc.specialization}</span>
+                          </div>
+                          <p className="text-xs text-neutral-500">{doc.qualification} · {doc.experience} yrs · ₹{doc.fee}</p>
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {doc.availableDays.map(d => (
+                              <span key={d} className="badge bg-emerald-50 text-emerald-700 text-[10px]">{d.slice(0, 3)}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0">
+                          <button onClick={() => startEdit(doc)}
+                            className="p-2 rounded-xl border border-neutral-200 hover:border-primary-300 hover:bg-primary-50 transition-colors">
+                            <Edit2 size={15} className="text-primary-500" />
+                          </button>
+                          <button onClick={() => deleteDoctor(doc._id)}
+                            className="p-2 rounded-xl border border-neutral-200 hover:border-red-300 hover:bg-red-50 transition-colors">
+                            <Trash2 size={15} className="text-red-500" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex gap-3">
-                        <button onClick={saveEdit} className="btn-primary flex items-center gap-2 text-sm"><Save size={14} /> Save Changes</button>
-                        <button onClick={() => setEditingId(null)} className="btn-outline flex items-center gap-2 text-sm"><X size={14} /> Cancel</button>
-                      </div>
-                    </div>
-                  ) : (
-                    /* View mode */
-                    <div className="flex items-center gap-4 flex-wrap">
-                      <img src={doc.image} alt={doc.name} className="w-14 h-14 rounded-xl bg-primary-50 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-neutral-800">{doc.name}</h3>
-                          <span className="badge bg-primary-50 text-primary-700 text-[10px]">{doc.specialization}</span>
-                        </div>
-                        <p className="text-xs text-neutral-500">{doc.qualification} · {doc.experience} yrs · ₹{doc.fee}</p>
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {doc.availableDays.map(d => <span key={d} className="badge bg-emerald-50 text-emerald-700 text-[10px]">{d.slice(0,3)}</span>)}
-                        </div>
-                      </div>
-                      <div className="flex gap-2 flex-shrink-0">
-                        <button onClick={() => startEdit(doc)} className="p-2 rounded-xl border border-neutral-200 hover:border-primary-300 hover:bg-primary-50 transition-colors" title="Edit">
-                          <Edit2 size={15} className="text-primary-500" />
-                        </button>
-                        <button onClick={() => deleteDoctor(doc.id)} className="p-2 rounded-xl border border-neutral-200 hover:border-red-300 hover:bg-red-50 transition-colors" title="Delete">
-                          <Trash2 size={15} className="text-red-500" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {/* ─── BOOKINGS TAB ─── */}
         {tab === 'bookings' && (
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-neutral-50 border-b border-neutral-100">
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Booking ID</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Patient</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Type</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Date & Time</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Status</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-50">
-                  {MOCK_BOOKINGS.map(b => (
-                    <tr key={b.id} className="hover:bg-neutral-50 transition-colors">
-                      <td className="px-5 py-4 font-mono text-xs text-neutral-500">#{b.id}</td>
-                      <td className="px-5 py-4">
-                        <div className="font-medium text-neutral-800">{b.patient}</div>
-                        <div className="text-xs text-neutral-400">{b.doctor !== '—' ? b.doctor : b.tests}</div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={`badge text-[10px] ${b.type === 'appointment' ? 'bg-primary-50 text-primary-700' : 'bg-teal-50 text-teal-700'}`}>
-                          {b.type === 'appointment' ? '👨‍⚕️ Appointment' : '🧪 Diagnostic'}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-xs text-neutral-600">
-                        {new Date(b.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} · {b.time}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={`badge text-[10px] ${
-                          b.status === 'confirmed' ? 'bg-blue-50 text-blue-700' :
-                          b.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
-                          b.status === 'upcoming' ? 'bg-amber-50 text-amber-700' :
-                          'bg-teal-50 text-teal-700'
-                        }`}>
-                          {b.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <button onClick={() => toast(`Booking ${b.id} marked complete`, { icon: '✅' })}
-                          className="p-1.5 rounded-lg hover:bg-emerald-50 transition-colors" title="Mark complete">
-                          <Check size={14} className="text-emerald-500" />
-                        </button>
-                        <button onClick={() => toast(`Booking ${b.id} cancelled`, { icon: '❌' })}
-                          className="p-1.5 rounded-lg hover:bg-red-50 transition-colors ml-1" title="Cancel">
-                          <X size={14} className="text-red-500" />
-                        </button>
-                      </td>
+            {loadingBookings ? (
+              <div className="flex justify-center py-16">
+                <Loader2 size={32} className="animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-neutral-50 border-b border-neutral-100">
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Booking ID</th>
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Patient</th>
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Type</th>
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Date & Time</th>
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Status</th>
+                      <th className="px-5 py-3.5 text-left text-xs font-semibold text-neutral-500 uppercase">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-50">
+                    {allBookings.length === 0 ? (
+                      <tr><td colSpan={6} className="text-center py-12 text-neutral-400">No bookings yet</td></tr>
+                    ) : allBookings.map(b => (
+                      <tr key={b._id} className="hover:bg-neutral-50 transition-colors">
+                        <td className="px-5 py-4 font-mono text-xs text-neutral-500">#{b.bookingRef}</td>
+                        <td className="px-5 py-4">
+                          <div className="font-medium text-neutral-800">{b.patientDetails?.name}</div>
+                          <div className="text-xs text-neutral-400">{b.bookingType === 'appointment' ? b.doctor?.name : b.tests?.map(t => t.name).join(', ')}</div>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`badge text-[10px] ${b.bookingType === 'appointment' ? 'bg-primary-50 text-primary-700' : 'bg-teal-50 text-teal-700'}`}>
+                            {b.bookingType === 'appointment' ? '👨‍⚕️ Appointment' : '🧪 Diagnostic'}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-xs text-neutral-600">
+                          {new Date(b.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })} · {b.timeSlot}
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`badge text-[10px] ${
+                            b.status === 'confirmed' ? 'bg-blue-50 text-blue-700' :
+                            b.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
+                            b.status === 'upcoming' ? 'bg-amber-50 text-amber-700' :
+                            b.status === 'cancelled' ? 'bg-red-50 text-red-700' :
+                            'bg-teal-50 text-teal-700'
+                          }`}>
+                            {b.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 flex gap-1">
+                          <button onClick={() => updateBookingStatus(b.bookingType, b._id, 'completed')}
+                            className="p-1.5 rounded-lg hover:bg-emerald-50 transition-colors" title="Mark complete">
+                            <Check size={14} className="text-emerald-500" />
+                          </button>
+                          <button onClick={() => updateBookingStatus(b.bookingType, b._id, 'cancelled')}
+                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors" title="Cancel">
+                            <X size={14} className="text-red-500" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
