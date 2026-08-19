@@ -70,6 +70,12 @@ export default function DoctorsPage() {
                   alt={`Dr. ${doc.name}`}
                   className="w-20 h-20 rounded-2xl object-cover bg-primary-50 flex-shrink-0"
                   loading="lazy"
+                  onError={(e) => {
+                    // Real photo not uploaded yet (or failed to load) — fall back to the avatar
+                    if (doc.fallbackImage && e.currentTarget.src !== doc.fallbackImage) {
+                      e.currentTarget.src = doc.fallbackImage
+                    }
+                  }}
                 />
                 <div className="flex-1 min-w-0">
                   <h2 className="font-display font-bold text-neutral-800 text-lg leading-tight">{doc.name}</h2>
