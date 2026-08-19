@@ -40,7 +40,7 @@ export default function DoctorsPage() {
               type="search"
               placeholder="Search by name or specialization…"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               className="input-field pl-10"
               aria-label="Search doctors"
             />
